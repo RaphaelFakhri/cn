@@ -210,8 +210,160 @@ try {
   }
   assert.equal(cnReset("rounded-lg rounded-card"), "rounded-lg rounded-card")
 
+  // A reset drops the names declared before it, imported ones included.
+  write("app/partial.css", `@theme {\n  --radius-old: 1px;\n}\n`)
+  write(
+    "app/cascade.css",
+    `@import "./partial.css";
+@theme {
+  --radius-early: 2px;
+  --radius-*: initial;
+  --radius-card: 1.25rem;
+  --shadow-early: 0 1px 2px #000;
+}
+@theme {
+  --shadow-*: initial;
+  --shadow-late: 0 2px 4px #000;
+}
+`
+  )
+  const cascade = await build({
+    cwd: dir,
+    css: "app/cascade.css",
+    full: true,
+    out: "cascade.mjs",
+  })
+  assert.deepEqual(cascade.fullConfig.theme.radius, ["card"])
+  assert.deepEqual(cascade.fullConfig.theme.shadow, ["late"])
+
+  // A declaration after a nested block is read.
+  write(
+    "app/nested.css",
+    `@theme inline {
+  --animate-in: enter 0.15s ease;
+  @keyframes enter {
+    from {
+      opacity: 0;
+    }
+  }
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --text-hero: 4rem;
+}
+`
+  )
+  const nested = await build({
+    cwd: dir,
+    css: "app/nested.css",
+    full: true,
+    out: "nested.mjs",
+  })
+  assert.deepEqual(nested.fullConfig.theme.animate.slice(-2), [
+    "in",
+    "accordion-down",
+  ])
+  assert.ok(nested.fullConfig.theme.text.includes("hero"))
+
+  // Packages resolve the way Tailwind resolves them. Tailwind's own theme is
+  // cn's default, and an alias resolves only in the bundler.
+  write(
+    "node_modules/tailwindcss/package.json",
+    `{ "name": "tailwindcss", "style": "index.css" }`
+  )
+  write(
+    "node_modules/tailwindcss/index.css",
+    `@theme default {\n  --radius-tailwind: 1px;\n}\n`
+  )
+  write(
+    "node_modules/tw-anim/package.json",
+    JSON.stringify({
+      name: "tw-anim",
+      exports: {
+        ".": { style: "./dist/anim.css" },
+        "./themes/*.css": { style: "./dist/themes/*.css" },
+      },
+    })
+  )
+  write(
+    "node_modules/tw-anim/dist/anim.css",
+    `@theme inline {
+  --animate-in: enter 0.15s ease;
+  @keyframes enter {
+    from {
+      opacity: 0;
+    }
+  }
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+}
+`
+  )
+  write(
+    "node_modules/tw-anim/dist/themes/dense.css",
+    `@theme {\n  --spacing-dense: 0.125rem;\n}\n`
+  )
+  write(
+    "node_modules/@acme/ui/package.json",
+    `{ "name": "@acme/ui", "style": "styles.css" }`
+  )
+  write(
+    "node_modules/@acme/ui/styles.css",
+    `@theme {\n  --radius-kit: 0.5rem;\n}\n`
+  )
+  write(
+    "node_modules/@acme/ui/tokens/type.css",
+    `@theme {\n  --text-kit: 0.8rem;\n}\n`
+  )
+  write(
+    "app/packages.css",
+    `@import "tailwindcss";
+@import "tw-anim";
+@import "tw-anim/themes/dense.css";
+@import "@acme/ui";
+@import "@acme/ui/tokens/type";
+@import "@/styles/type.css";
+@source "../dist/*.js";
+
+@theme {
+  --text-after-source: 1rem;
+}
+`
+  )
+  const packages = await build({
+    cwd: dir,
+    css: "app/packages.css",
+    full: true,
+    out: "packages.mjs",
+  })
+  assert.deepEqual(
+    packages.cssFiles.map(
+      (f) => f.split("/node_modules/")[1] ?? f.slice(dir.length + 1)
+    ),
+    [
+      "app/packages.css",
+      "tw-anim/dist/anim.css",
+      "tw-anim/dist/themes/dense.css",
+      "@acme/ui/styles.css",
+      "@acme/ui/tokens/type.css",
+    ]
+  )
+  const theme = packages.fullConfig.theme
+  assert.deepEqual(theme.animate.slice(-2), ["in", "accordion-down"])
+  assert.ok(theme.spacing.includes("dense"))
+  assert.ok(theme.radius.includes("kit"))
+  assert.ok(!theme.radius.includes("tailwind"), "tailwindcss is not read")
+  assert.deepEqual(theme.text.slice(-2), ["kit", "after-source"])
+  const cnPackages = await load("packages.mjs")
+  assert.equal(
+    cnPackages("animate-accordion-down animate-spin"),
+    "animate-spin"
+  )
+  assert.equal(cnPackages("rounded-kit rounded-lg"), "rounded-lg")
+  assert.equal(cnPackages("text-kit text-sm"), "text-sm")
+
   // `--*: initial` resets every scale.
-  write("app/bare.css", `@theme {\n  --*: initial;\n  --text-body: 1rem;\n}\n`)
+  write(
+    "app/bare.css",
+    `@theme {\n  --text-gone: 1rem;\n  --*: initial;\n  --text-body: 1rem;\n}\n`
+  )
   const bare = await build({
     cwd: dir,
     css: "app/bare.css",
@@ -435,6 +587,28 @@ try {
     (await loadIn("cli-off.mjs"))("rounded-card rounded-lg"),
     "rounded-card rounded-lg"
   )
+
+  // A discovered partial counts in its importer's cascade, whichever is
+  // found first.
+  writeIn(
+    "partials/a/radius.css",
+    `@theme {\n  --radius-old: 1px;\n  --shadow-kept: 0 1px 2px #000;\n}\n`
+  )
+  writeIn(
+    "partials/z.css",
+    `@import "./a/radius.css";\n@theme {\n  --radius-*: initial;\n  --radius-card: 1.25rem;\n}\n`
+  )
+  const partials = await build({
+    cwd: join(root, "partials"),
+    full: true,
+    out: "partials.mjs",
+  })
+  assert.deepEqual(
+    partials.cssFiles.map((f) => f.slice(root.length + 1)).sort(),
+    ["partials/a/radius.css", "partials/z.css"]
+  )
+  assert.deepEqual(partials.fullConfig.theme.radius, ["card"])
+  assert.ok(partials.fullConfig.theme.shadow.includes("kept"))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
