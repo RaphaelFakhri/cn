@@ -1,5 +1,13 @@
 # cn
 
+## 0.5.0
+
+### Minor Changes
+
+- [#157](https://github.com/shadcn-ui/cn/pull/157) [`663adea`](https://github.com/shadcn-ui/cn/commit/663adeaa0ac37af101aa7790f2ce44df4a7e5043) Thanks [@shadcn](https://github.com/shadcn)! - Drop Node 20, which reached end of life, and require Node 22 or later.
+
+- [#164](https://github.com/shadcn-ui/cn/pull/164) [`64aa1d0`](https://github.com/shadcn-ui/cn/commit/64aa1d0b6c708f1a23e53ade4db6c8c278eceb75) Thanks [@shadcn](https://github.com/shadcn)! - `cn build` now follows package `@import`s, reads `@theme` declarations after nested blocks such as `@keyframes`, and drops names declared before a `--*: initial` reset.
+
 ## 0.4.0
 
 ### Minor Changes
